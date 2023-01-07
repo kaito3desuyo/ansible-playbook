@@ -1,0 +1,96 @@
+---
+# https://kubernetes.io/docs/setup/production-environment/container-runtimes/
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+# https://rabbit-note.com/2022/08/09/build-kubernetes-home-cluster/
+# https://4mo.co/k8s-setup-home-cluster/
+
+- name: Install Docker public signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/trusted.gpg.d/docker.asc
+    mode: "0644"
+
+- name: Add the Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: deb [signed-by=/etc/apt/trusted.gpg.d/docker.asc] https://download.docker.com/linux/ubuntu jammy stable
+    state: present
+
+- name: Install Google Cloud public signing key
+  ansible.builtin.get_url:
+    url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    dest: /etc/apt/trusted.gpg.d/k8s.gpg
+    mode: "0644"
+
+- name: Add the Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: deb [signed-by=/etc/apt/trusted.gpg.d/k8s.gpg] https://apt.kubernetes.io/ kubernetes-xenial main
+    state: present
+
+- name: Install containerd & Kubernetes packages
+  ansible.builtin.apt:
+    pkg:
+      - containerd.io
+      - kubelet
+      - kubeadm
+      - kubectl
+    update_cache: true
+  notify: Reboot
+
+- name: Hold Kubernetes packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  with_items:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Setting kernel module
+  ansible.builtin.lineinfile:
+    path: /etc/modules-load.d/k8s.conf
+    line: "{{ item }}"
+    create: true
+    mode: "0644"
+  with_items:
+    - overlay
+    - br_netfilter
+
+- name: Load kernel module
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
+
+- name: Setting sysctl
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.d/k8s.conf
+    line: "{{ item }}"
+    create: true
+    mode: "0644"
+  with_items:
+    - net.bridge.bridge-nf-call-iptables  = 1
+    - net.bridge.bridge-nf-call-ip6tables = 1
+    - net.ipv4.ip_forward                 = 1
+  notify: Reload Sysctl
+
+- name: Disable swap
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '\sswap\s'
+    state: absent
+
+- name: Create containerd config file
+  ansible.builtin.shell:
+    cmd: containerd config default > /etc/containerd/config.toml
+  changed_when: false
+
+- name: Enable systemd cgroup
+  ansible.builtin.lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    insertafter: "{{ item.insertafter }}"
+  with_items:
+    - regexp: "            SystemdCgroup = false"
+      line: "            SystemdCgroup = true"
+      insertafter: 'plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options'
+  changed_when: false
