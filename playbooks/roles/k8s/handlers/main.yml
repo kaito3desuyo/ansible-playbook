@@ -1,7 +1,3 @@
 ---
-- name: Reload Sysctl
+- name: Reload sysctl
   ansible.builtin.command: sysctl --system
-
-- name: Reboot
-  ansible.builtin.reboot:
-    reboot_timeout: 300
